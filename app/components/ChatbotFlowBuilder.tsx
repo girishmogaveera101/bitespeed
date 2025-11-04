@@ -1,15 +1,12 @@
-'use client';
+"use client"
 
-import React, { useState, useRef } from 'react';
-import { MessageSquare, Settings, Save, HelpCircle, GitBranch, Trash2, LucideIcon } from 'lucide-react';
+import React, { useState, useRef, useCallback } from 'react';
+import { MessageSquare, Settings, Save, HelpCircle, GitBranch, Trash2, Download, Upload, CheckCircle, AlertCircle, Play, Copy } from 'lucide-react';
 
-// Type definitions
-interface NodeType {
-  id: string;
-  label: string;
-  icon: LucideIcon;
-  color: 'blue' | 'purple' | 'green';
-  description: string;
+// Type Definitions
+interface Position {
+  x: number;
+  y: number;
 }
 
 interface NodeData {
@@ -20,11 +17,11 @@ interface NodeData {
 
 interface Node {
   id: string;
-  type: string;
+  type: 'message' | 'question' | 'condition';
   label: string;
-  icon: LucideIcon;
+  icon: React.ComponentType<{ className?: string }>;
   color: 'blue' | 'purple' | 'green';
-  position: { x: number; y: number };
+  position: Position;
   data: NodeData;
 }
 
@@ -34,14 +31,33 @@ interface Edge {
   to: string;
 }
 
-interface TempEdge {
-  from: { x: number; y: number };
-  to: { x: number; y: number };
+interface NodeType {
+  id: 'message' | 'question' | 'condition';
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  color: 'blue' | 'purple' | 'green';
+  description: string;
 }
 
-type ColorClasses = {
-  [key in 'blue' | 'purple' | 'green']: string;
-};
+interface TempEdge {
+  from: Position;
+  to: Position;
+}
+
+interface FlowData {
+  nodes: Array<{
+    id: string;
+    type: string;
+    position: Position;
+    data: NodeData;
+  }>;
+  edges: Edge[];
+  metadata: {
+    savedAt?: string;
+    exportedAt?: string;
+    version: string;
+  };
+}
 
 export default function ChatbotFlowBuilder() {
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -50,6 +66,9 @@ export default function ChatbotFlowBuilder() {
   const [draggedNodeType, setDraggedNodeType] = useState<NodeType | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
   const [tempEdge, setTempEdge] = useState<TempEdge | null>(null);
+  const [showValidation, setShowValidation] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   // Node type definitions
@@ -77,18 +96,193 @@ export default function ChatbotFlowBuilder() {
     }
   ];
 
+  // Validate flow
+  const validateFlow = useCallback((): boolean => {
+    const errors: string[] = [];
+
+    if (nodes.length === 0) {
+      errors.push('Flow is empty. Add at least one node.');
+      setValidationErrors(errors);
+      setShowValidation(true);
+      return false;
+    }
+
+    nodes.forEach(node => {
+      if (node.type === 'message' && (!node.data.message || node.data.message.trim() === '')) {
+        errors.push(`Message node "${node.id}" has no message text.`);
+      }
+      if (node.type === 'question' && (!node.data.question || node.data.question.trim() === '')) {
+        errors.push(`Question node "${node.id}" has no question text.`);
+      }
+      if (node.type === 'condition' && (!node.data.condition || node.data.condition.trim() === '')) {
+        errors.push(`Condition node "${node.id}" has no condition logic.`);
+      }
+    });
+
+    const connectedNodeIds = new Set<string>();
+    edges.forEach(edge => {
+      connectedNodeIds.add(edge.from);
+      connectedNodeIds.add(edge.to);
+    });
+
+    if (nodes.length > 1) {
+      nodes.forEach(node => {
+        if (!connectedNodeIds.has(node.id)) {
+          errors.push(`Node "${node.id}" is not connected to the flow.`);
+        }
+      });
+    }
+
+    setValidationErrors(errors);
+    setShowValidation(true);
+    return errors.length === 0;
+  }, [nodes, edges]);
+
+  // Save flow (using in-memory state instead of localStorage)
+  const saveFlow = useCallback(() => {
+    if (!validateFlow()) {
+      return;
+    }
+
+    const flowData: FlowData = {
+      nodes: nodes.map(node => ({
+        id: node.id,
+        type: node.type,
+        position: node.position,
+        data: node.data
+      })),
+      edges: edges.map(edge => ({
+        id: edge.id,
+        from: edge.from,
+        to: edge.to
+      })),
+      metadata: {
+        savedAt: new Date().toISOString(),
+        version: '1.0'
+      }
+    };
+
+    setShowSaveSuccess(true);
+    setTimeout(() => setShowSaveSuccess(false), 3000);
+
+    console.log('Flow saved:', flowData);
+  }, [nodes, edges, validateFlow]);
+
+  // Export flow as JSON
+  const exportFlow = useCallback(() => {
+    const flowData: FlowData = {
+      nodes: nodes.map(node => ({
+        id: node.id,
+        type: node.type,
+        position: node.position,
+        data: node.data
+      })),
+      edges: edges,
+      metadata: {
+        exportedAt: new Date().toISOString(),
+        version: '1.0'
+      }
+    };
+
+    const dataStr = JSON.stringify(flowData, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `chatbot-flow-${Date.now()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [nodes, edges]);
+
+  // Import flow from JSON
+  const importFlow = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const flowData = JSON.parse(event.target?.result as string) as FlowData;
+        
+        const loadedNodes = flowData.nodes.map(node => {
+          const nodeType = nodeTypes.find(nt => nt.id === node.type);
+          return {
+            ...node,
+            icon: nodeType!.icon,
+            color: nodeType!.color,
+            label: nodeType!.label
+          } as Node;
+        });
+
+        setNodes(loadedNodes);
+        setEdges(flowData.edges);
+        setSelectedNode(null);
+        alert('Flow imported successfully!');
+      } catch (error) {
+        alert('Error importing flow. Please check the file format.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }, []);
+
+  // Clear canvas
+  const clearCanvas = useCallback(() => {
+    if (nodes.length === 0) return;
+    
+    if (confirm('Are you sure you want to clear the entire canvas? This cannot be undone.')) {
+      setNodes([]);
+      setEdges([]);
+      setSelectedNode(null);
+      setConnectingFrom(null);
+      setTempEdge(null);
+    }
+  }, [nodes.length]);
+
+  // Duplicate node
+  const duplicateNode = useCallback(() => {
+    if (!selectedNode) return;
+
+    const newNode: Node = {
+      ...selectedNode,
+      id: `node_${Date.now()}`,
+      position: {
+        x: selectedNode.position.x + 50,
+        y: selectedNode.position.y + 50
+      }
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    setSelectedNode(newNode);
+  }, [selectedNode]);
+
+  // Auto-arrange nodes
+  const autoArrange = useCallback(() => {
+    if (nodes.length === 0) return;
+
+    const arranged = nodes.map((node, index) => ({
+      ...node,
+      position: {
+        x: 100 + (index % 3) * 300,
+        y: 100 + Math.floor(index / 3) * 200
+      }
+    }));
+
+    setNodes(arranged);
+  }, [nodes]);
+
   // Handle drag start from node library
-  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, nodeType: NodeType): void => {
+  const handleDragStart = (e: React.DragEvent, nodeType: NodeType) => {
     setDraggedNodeType(nodeType);
   };
 
   // Handle drag over canvas
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>): void => {
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
   };
 
   // Handle drop on canvas
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>): void => {
+  const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     if (!draggedNodeType || !canvasRef.current) return;
 
@@ -104,41 +298,41 @@ export default function ChatbotFlowBuilder() {
       color: draggedNodeType.color,
       position: { x, y },
       data: {
-        message: draggedNodeType.id === 'message' ? 'Enter your message here' : undefined,
-        question: draggedNodeType.id === 'question' ? 'What would you like to ask?' : undefined,
-        condition: draggedNodeType.id === 'condition' ? 'if condition' : undefined
+        message: draggedNodeType.id === 'message' ? 'Enter your message here' : '',
+        question: draggedNodeType.id === 'question' ? 'What would you like to ask?' : '',
+        condition: draggedNodeType.id === 'condition' ? 'if condition' : ''
       }
     };
 
-    setNodes([...nodes, newNode]);
+    setNodes(prev => [...prev, newNode]);
     setSelectedNode(newNode);
     setDraggedNodeType(null);
-  };
+  }, [draggedNodeType]);
 
   // Handle node click
-  const handleNodeClick = (e: React.MouseEvent<HTMLDivElement>, node: Node): void => {
+  const handleNodeClick = (e: React.MouseEvent, node: Node) => {
     e.stopPropagation();
     setSelectedNode(node);
   };
 
   // Handle canvas click (deselect)
-  const handleCanvasClick = (): void => {
+  const handleCanvasClick = () => {
     setSelectedNode(null);
     setConnectingFrom(null);
     setTempEdge(null);
   };
 
   // Handle node drag on canvas
-  const handleNodeDragStart = (e: React.DragEvent<HTMLDivElement>, node: Node): void => {
+  const handleNodeDragStart = (e: React.DragEvent, node: Node) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('nodeId', node.id);
   };
 
-  const handleNodeDragOnCanvas = (e: React.DragEvent<HTMLDivElement>): void => {
+  const handleNodeDragOnCanvas = (e: React.DragEvent) => {
     e.preventDefault();
   };
 
-  const handleNodeDropOnCanvas = (e: React.DragEvent<HTMLDivElement>): void => {
+  const handleNodeDropOnCanvas = (e: React.DragEvent) => {
     e.preventDefault();
     const nodeId = e.dataTransfer.getData('nodeId');
     if (!nodeId || !canvasRef.current) return;
@@ -147,7 +341,7 @@ export default function ChatbotFlowBuilder() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    setNodes(nodes.map(node => 
+    setNodes(prev => prev.map(node => 
       node.id === nodeId 
         ? { ...node, position: { x: x - 100, y: y - 40 } }
         : node
@@ -155,12 +349,12 @@ export default function ChatbotFlowBuilder() {
   };
 
   // Connection handling
-  const startConnection = (e: React.MouseEvent<HTMLDivElement>, nodeId: string): void => {
+  const startConnection = (e: React.MouseEvent, nodeId: string) => {
     e.stopPropagation();
     setConnectingFrom(nodeId);
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>): void => {
+  const handleMouseMove = (e: React.MouseEvent) => {
     if (!connectingFrom || !canvasRef.current) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
@@ -176,7 +370,7 @@ export default function ChatbotFlowBuilder() {
     }
   };
 
-  const endConnection = (e: React.MouseEvent<HTMLDivElement>, targetNodeId: string): void => {
+  const endConnection = (e: React.MouseEvent, targetNodeId: string) => {
     e.stopPropagation();
     if (!connectingFrom || connectingFrom === targetNodeId) {
       setConnectingFrom(null);
@@ -184,13 +378,12 @@ export default function ChatbotFlowBuilder() {
       return;
     }
 
-    // Check if edge already exists
     const edgeExists = edges.some(
       edge => edge.from === connectingFrom && edge.to === targetNodeId
     );
 
     if (!edgeExists) {
-      setEdges([...edges, {
+      setEdges(prev => [...prev, {
         id: `edge_${Date.now()}`,
         from: connectingFrom,
         to: targetNodeId
@@ -202,46 +395,43 @@ export default function ChatbotFlowBuilder() {
   };
 
   // Update node data
-  const updateNodeData = (field: keyof NodeData, value: string): void => {
+  const updateNodeData = (field: keyof NodeData, value: string) => {
     if (!selectedNode) return;
     
-    const updatedData: NodeData = { ...selectedNode.data, [field]: value };
-    
-    setNodes(nodes.map(node =>
+    setNodes(prev => prev.map(node =>
       node.id === selectedNode.id
-        ? { ...node, data: updatedData }
+        ? { ...node, data: { ...node.data, [field]: value } }
         : node
     ));
     
     setSelectedNode({
       ...selectedNode,
-      data: updatedData
+      data: { ...selectedNode.data, [field]: value }
     });
   };
 
   // Delete selected node
-  const deleteNode = (): void => {
+  const deleteNode = useCallback(() => {
     if (!selectedNode) return;
-    // Remove node and all connected edges
-    setEdges(edges.filter(edge => edge.from !== selectedNode.id && edge.to !== selectedNode.id));
-    setNodes(nodes.filter(node => node.id !== selectedNode.id));
+    setEdges(prev => prev.filter(edge => edge.from !== selectedNode.id && edge.to !== selectedNode.id));
+    setNodes(prev => prev.filter(node => node.id !== selectedNode.id));
     setSelectedNode(null);
-  };
+  }, [selectedNode]);
 
   // Delete edge
-  const deleteEdge = (e: React.MouseEvent<SVGPathElement>, edgeId: string): void => {
+  const deleteEdge = (e: React.MouseEvent, edgeId: string) => {
     e.stopPropagation();
-    setEdges(edges.filter(edge => edge.id !== edgeId));
+    setEdges(prev => prev.filter(edge => edge.id !== edgeId));
   };
 
   // Get color classes
-  const getColorClasses = (color: 'blue' | 'purple' | 'green'): string => {
-    const colors: ColorClasses = {
+  const getColorClasses = (color: string) => {
+    const colors: Record<string, string> = {
       blue: 'from-blue-50 to-blue-100 border-blue-300 text-blue-600',
       purple: 'from-purple-50 to-purple-100 border-purple-300 text-purple-600',
       green: 'from-green-50 to-green-100 border-green-300 text-green-600'
     };
-    return colors[color];
+    return colors[color] || colors.blue;
   };
 
   // Draw edge
@@ -264,12 +454,7 @@ export default function ChatbotFlowBuilder() {
           className="cursor-pointer hover:stroke-red-500 transition-colors"
           onClick={(e) => deleteEdge(e, edgeId)}
         />
-        <circle
-          cx={toX}
-          cy={toY}
-          r="5"
-          fill="#3b82f6"
-        />
+        <circle cx={toX} cy={toY} r="5" fill="#3b82f6" />
       </g>
     );
   };
@@ -312,6 +497,46 @@ export default function ChatbotFlowBuilder() {
               <li>• Drag nodes to reposition</li>
             </ul>
           </div>
+
+          <div className="mt-4 space-y-2">
+            <label className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm cursor-pointer">
+              <Download className="w-4 h-4" />
+              Import JSON
+              <input
+                type="file"
+                accept=".json"
+                onChange={importFlow}
+                className="hidden"
+              />
+            </label>
+
+            <button
+              onClick={autoArrange}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={nodes.length === 0}
+            >
+              Auto Arrange
+            </button>
+
+            {selectedNode && (
+              <button
+                onClick={duplicateNode}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm"
+              >
+                <Copy className="w-4 h-4" />
+                Duplicate Node
+              </button>
+            )}
+
+            <button
+              onClick={clearCanvas}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={nodes.length === 0}
+            >
+              <Trash2 className="w-4 h-4" />
+              Clear Canvas
+            </button>
+          </div>
         </div>
       </div>
 
@@ -326,11 +551,75 @@ export default function ChatbotFlowBuilder() {
             </p>
           </div>
           
-          <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-            <Save className="w-4 h-4" />
-            Save Flow
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={validateFlow}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            >
+              <Play className="w-4 h-4" />
+              Validate
+            </button>
+
+            <button 
+              onClick={exportFlow}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={nodes.length === 0}
+            >
+              <Download className="w-4 h-4" />
+              Export
+            </button>
+
+            <button 
+              onClick={saveFlow}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Save className="w-4 h-4" />
+              Save Flow
+            </button>
+          </div>
         </div>
+
+        {/* Success/Validation Messages */}
+        {showSaveSuccess && (
+          <div className="mx-6 mt-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-green-600" />
+            <span className="text-sm text-green-800">Flow saved successfully!</span>
+          </div>
+        )}
+
+        {showValidation && (
+          <div className={`mx-6 mt-4 p-3 border rounded-lg ${validationErrors.length === 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+            <div className="flex items-start gap-2">
+              {validationErrors.length === 0 ? (
+                <>
+                  <CheckCircle className="w-5 h-5 text-green-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-green-800">Validation Passed!</p>
+                    <p className="text-xs text-green-700 mt-1">Your flow is ready to be deployed.</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="w-5 h-5 text-red-600 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-red-800">Validation Errors:</p>
+                    <ul className="text-xs text-red-700 mt-1 space-y-1">
+                      {validationErrors.map((error, idx) => (
+                        <li key={idx}>• {error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
+              )}
+            </div>
+            <button
+              onClick={() => setShowValidation(false)}
+              className="mt-2 text-xs text-gray-600 hover:text-gray-800"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Canvas Area */}
         <div 
@@ -356,7 +645,6 @@ export default function ChatbotFlowBuilder() {
               </div>
             ) : (
               <div className="relative w-full h-full min-h-[600px]">
-                {/* SVG for edges */}
                 <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 1 }}>
                   {edges.map(edge => {
                     const fromNode = nodes.find(n => n.id === edge.from);
@@ -367,7 +655,6 @@ export default function ChatbotFlowBuilder() {
                     return null;
                   })}
                   
-                  {/* Temporary edge while connecting */}
                   {tempEdge && (
                     <line
                       x1={tempEdge.from.x}
@@ -381,7 +668,6 @@ export default function ChatbotFlowBuilder() {
                   )}
                 </svg>
 
-                {/* Nodes */}
                 {nodes.map((node) => {
                   const Icon = node.icon;
                   const isSelected = selectedNode?.id === node.id;
@@ -413,7 +699,6 @@ export default function ChatbotFlowBuilder() {
                         </p>
                       </div>
                       
-                      {/* Connection points */}
                       <div 
                         className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-green-400 rounded-full border-2 border-white cursor-pointer hover:bg-green-500 pointer-events-auto"
                         style={{ zIndex: 20 }}
@@ -438,108 +723,133 @@ export default function ChatbotFlowBuilder() {
           </div>
         </div>
       </div>
-
-      {/* Right Panel - Settings */}
-      <div className="w-80 bg-white border-l border-gray-200 flex flex-col">
-        <div className="p-4 border-b border-gray-200">
-          <div className="flex items-center gap-2">
-            <Settings className="w-5 h-5 text-gray-600" />
-            <h2 className="text-lg font-semibold text-gray-800">Node Settings</h2>
-          </div>
-        </div>
-        
-        <div className="flex-1 p-4 overflow-y-auto">
-          {selectedNode ? (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Node Type
-                </label>
-                <div className={`p-3 bg-gradient-to-r ${getColorClasses(selectedNode.color)} border-2 rounded-lg`}>
-                  <div className="flex items-center gap-2">
-                    <selectedNode.icon className="w-5 h-5" />
-                    <span className="font-medium text-gray-800">{selectedNode.label}</span>
-                  </div>
-                </div>
+    {/* Right Panel - Settings */}
+    <div className="w-80 bg-white border-l border-gray-200 flex flex-col">
+    <div className="p-4 border-b border-gray-200">
+      <div className="flex items-center gap-2">
+        <Settings className="w-5 h-5 text-gray-600" />
+        <h2 className="text-lg font-semibold text-gray-800">Node Settings</h2>
+      </div>
+    </div>
+    
+    <div className="flex-1 p-4 overflow-y-auto">
+      {selectedNode ? (
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Node Type
+            </label>
+            <div className={`p-3 bg-gradient-to-r ${getColorClasses(selectedNode.color)} border-2 rounded-lg`}>
+              <div className="flex items-center gap-2">
+                <selectedNode.icon className="w-5 h-5" />
+                <span className="font-medium text-gray-800">{selectedNode.label}</span>
               </div>
+            </div>
+          </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Node ID
+            </label>
+            <input
+              type="text"
+              className="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg text-sm text-gray-600"
+              value={selectedNode.id}
+              disabled
+            />
+          </div>
+
+          {selectedNode.type === 'message' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Message Text
+              </label>
+              <textarea
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                rows={4}
+                value={selectedNode.data.message}
+                onChange={(e) => updateNodeData('message', e.target.value)}
+                placeholder="Enter the message to display..."
+              />
+            </div>
+          )}
+
+          {selectedNode.type === 'question' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Question Text
+              </label>
+              <textarea
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                rows={4}
+                value={selectedNode.data.question}
+                onChange={(e) => updateNodeData('question', e.target.value)}
+                placeholder="Enter your question..."
+              />
+            </div>
+          )}
+
+          {selectedNode.type === 'condition' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Condition Logic
+              </label>
+              <textarea
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent font-mono text-sm"
+                rows={4}
+                value={selectedNode.data.condition}
+                onChange={(e) => updateNodeData('condition', e.target.value)}
+                placeholder="e.g., if user_input === 'yes'"
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Position
+            </label>
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Node ID
-                </label>
+                <label className="text-xs text-gray-500">X</label>
                 <input
-                  type="text"
-                  className="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg text-sm text-gray-600"
-                  value={selectedNode.id}
+                  type="number"
+                  className="w-full px-2 py-1 bg-gray-100 border border-gray-300 rounded text-sm"
+                  value={Math.round(selectedNode.position.x)}
                   disabled
                 />
               </div>
-
-              {selectedNode.type === 'message' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Message Text
-                  </label>
-                  <textarea
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    rows={4}
-                    value={selectedNode.data.message || ''}
-                    onChange={(e) => updateNodeData('message', e.target.value)}
-                    placeholder="Enter the message to send..."
-                  />
-                </div>
-              )}
-
-              {selectedNode.type === 'question' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Question Text
-                  </label>
-                  <textarea
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    rows={4}
-                    value={selectedNode.data.question || ''}
-                    onChange={(e) => updateNodeData('question', e.target.value)}
-                    placeholder="Enter the question to ask..."
-                  />
-                </div>
-              )}
-
-              {selectedNode.type === 'condition' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Condition Logic
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    value={selectedNode.data.condition || ''}
-                    onChange={(e) => updateNodeData('condition', e.target.value)}
-                    placeholder="e.g., user_age > 18"
-                  />
-                </div>
-              )}
-
-              <div className="pt-4 border-t border-gray-200">
-                <button
-                  onClick={deleteNode}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete Node
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="h-full flex items-center justify-center text-center text-gray-400">
               <div>
-                <Settings className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                <p className="text-sm">Select a node to edit its properties</p>
+                <label className="text-xs text-gray-500">Y</label>
+                <input
+                  type="number"
+                  className="w-full px-2 py-1 bg-gray-100 border border-gray-300 rounded text-sm"
+                  value={Math.round(selectedNode.position.y)}
+                  disabled
+                />
               </div>
             </div>
-          )}
+          </div>
+
+          <div className="pt-4 border-t border-gray-200">
+            <button
+              onClick={deleteNode}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete Node
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center text-gray-400">
+            <Settings className="w-12 h-12 mx-auto mb-3 opacity-50" />
+            <p className="text-sm">Select a node to edit its settings</p>
+          </div>
+        </div>
+      )}
     </div>
-  );
+  </div>
+</div>
+);
 }
