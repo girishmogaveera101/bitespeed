@@ -489,15 +489,6 @@ export default function ChatbotFlowBuilder() {
             })}
           </div>
 
-          <div className="mt-6 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="text-xs font-medium text-blue-900 mb-2">💡 Quick Tips:</p>
-            <ul className="text-xs text-blue-700 space-y-1">
-              <li>• Click bottom dot to connect</li>
-              <li>• Click edge to delete it</li>
-              <li>• Drag nodes to reposition</li>
-            </ul>
-          </div>
-
           <div className="mt-4 space-y-2">
             <label className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm cursor-pointer">
               <Download className="w-4 h-4" />
@@ -540,44 +531,17 @@ export default function ChatbotFlowBuilder() {
         </div>
       </div>
 
+
+
+
+
       {/* Center Panel - Canvas */}
       <div className="flex-1 flex flex-col">
         {/* Top Bar */}
-        <div className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
-          <div>
-            <h1 className="text-xl font-bold text-gray-800">Chatbot Flow Builder</h1>
-            <p className="text-xs text-gray-500">
-              {nodes.length} node{nodes.length !== 1 ? 's' : ''}, {edges.length} connection{edges.length !== 1 ? 's' : ''}
-            </p>
-          </div>
-          
-          <div className="flex gap-2">
-            <button 
-              onClick={validateFlow}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-            >
-              <Play className="w-4 h-4" />
-              Validate
-            </button>
+        
 
-            <button 
-              onClick={exportFlow}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={nodes.length === 0}
-            >
-              <Download className="w-4 h-4" />
-              Export
-            </button>
 
-            <button 
-              onClick={saveFlow}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Save className="w-4 h-4" />
-              Save Flow
-            </button>
-          </div>
-        </div>
+
 
         {/* Success/Validation Messages */}
         {showSaveSuccess && (
